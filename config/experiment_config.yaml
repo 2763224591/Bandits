@@ -7,7 +7,7 @@ experiment:
   device: "cuda" # 或 "cpu"
 
 data:
-  path: "features/features_all.csv"
+  path: "data/features/features_all.csv"
   context_cols: ["underfill", "mu"]
   action_col: "r_l"
   feature_cols: null # 默认自动读取除context/action/step外的所有列
@@ -40,9 +40,9 @@ hyperparameters:
   
   # 训练参数
   batch_size: 64
-  lr: 1e-3
+  lr: 0.001                   # 学习率 (使用浮点数格式，避免 YAML 解析为字符串)
   epochs: 50
-  weight_decay: 1e-4
+  weight_decay: 0.0001
 
 reward:
   # 奖励函数权重

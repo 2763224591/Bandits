@@ -329,7 +329,7 @@ if __name__ == "__main__":
     
     batch_size = 32
     seq_len = 50
-    feature_dim = 56
+    feature_dim = 51  # 51 维物理特征
     context_dim = 2
     d_model = 64
     n_actions = 9
