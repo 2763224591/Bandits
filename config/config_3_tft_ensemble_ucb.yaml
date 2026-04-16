@@ -1,0 +1,40 @@
+# 配置 3: TFT + Ensemble + NeuralUCB
+experiment:
+  name: "TFT_Ensemble_NeuralUCB"
+  seed: 42
+  device: "cuda"
+
+data:
+  path: "features/features_all.csv"
+  context_cols: ["underfill", "mu"]
+  action_col: "r_l"
+  feature_cols: null
+  val_split: 0.2
+
+model:
+  encoder_type: "tft"
+  uncertainty_type: "ensemble"
+  policy_type: "neural_ucb"
+
+hyperparameters:
+  d_model: 64
+  n_heads: 4
+  n_layers: 3
+  dropout: 0.1
+  mc_dropout_samples: 10
+  ensemble_size: 5
+  exploration_bonus: 0.1
+  prior_alpha: 1.0
+  batch_size: 64
+  lr: 1e-3
+  epochs: 50
+  weight_decay: 1e-4
+
+reward:
+  w_quality: 10.0
+  w_speed: 1.0
+  damage_threshold: 0.8
+  stress_threshold: 800.0
+
+actions:
+  values: [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]
