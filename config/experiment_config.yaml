@@ -1,0 +1,55 @@
+# experiment_config.yaml
+# 核心实验配置：通过修改此处自由组合架构
+
+experiment:
+  name: "Al6082_Optimization_v1"
+  seed: 42
+  device: "cuda" # 或 "cpu"
+
+data:
+  path: "features/features_all.csv"
+  context_cols: ["underfill", "mu"]
+  action_col: "r_l"
+  feature_cols: null # 默认自动读取除context/action/step外的所有列
+  val_split: 0.2
+
+model:
+  # --- Encoder 选择: "transformer" 或 "tft" ---
+  encoder_type: "transformer" 
+  
+  # --- Uncertainty 选择: "mc_dropout", "ensemble", 或 "none" ---
+  uncertainty_type: "mc_dropout"
+  
+  # --- Policy 选择: "neural_ucb" 或 "thompson_sampling" ---
+  policy_type: "neural_ucb"
+
+hyperparameters:
+  # Encoder 参数
+  d_model: 64
+  n_heads: 4
+  n_layers: 3
+  dropout: 0.1
+  
+  # Uncertainty 参数
+  mc_dropout_samples: 10      # MC-Dropout 采样次数
+  ensemble_size: 5            # Ensemble 模型数量
+  
+  # Policy 参数
+  exploration_bonus: 0.1      # UCB 探索系数
+  prior_alpha: 1.0            # Thompson 先验参数
+  
+  # 训练参数
+  batch_size: 64
+  lr: 1e-3
+  epochs: 50
+  weight_decay: 1e-4
+
+reward:
+  # 奖励函数权重
+  w_quality: 10.0   # 质量惩罚权重 (高优先级)
+  w_speed: 1.0      # 速度奖励权重 (低优先级)
+  damage_threshold: 0.8 # 损伤阈值，超过则重罚
+  stress_threshold: 800.0 # 应力阈值 (MPa)
+
+actions:
+  values: [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]

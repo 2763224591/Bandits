@@ -1,0 +1,71 @@
+```
+# Configuration and data files that might be generated
+config/*.yaml
+!config/config_1_transformer_mcdropout_ucb.yaml
+!config/config_2_transformer_mcdropout_ts.yaml
+!config/config_3_tft_ensemble_ucb.yaml
+!config/config_4_tft_ensemble_ts.yaml
+!config/experiment_config.yaml
+
+# Dependencies
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Build and distribution artifacts
+build/
+dist/
+*.egg
+*.whl
+*.tar.gz
+*.zip
+
+# Virtual environments
+venv/
+.venv/
+env/
+.ENV/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Coverage reports
+.coverage
+htmlcov/
+.coverage.*
+*.coverage.*
+
+# Python specific
+*.py[cod]
+*$py.class
+*$pyc.class
+*.so
+.Python
+
+# Data files that might be temporary
+data/*.csv
+!data/features/dummy_features.csv
+```
