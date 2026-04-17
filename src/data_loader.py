@@ -11,9 +11,22 @@ import yaml
 
 
 class ForgeDataLoader:
-    """铝合金锻造数据加载器"""
+    """铝合金锻造数据加载器
     
-    # 56维特征列名 (根据实际数据定义)
+    数据格式说明:
+    - CSV总列数：56列 (51物理特征 + 2上下文 + 1动作 + 2元数据)
+    - 物理特征 (51维): 48区域统计 (3区×4字段×4统计量) + 3全局统计
+    - 上下文 (2维): underfill, mu (轨迹级固定)
+    - 动作 (1维): r_l (连杆比，轨迹级固定)
+    - 元数据 (2列): step(时序索引), param_tag(标识符)
+    
+    模型输入分离:
+    - Encoder输入：51维物理特征序列 (seq_len, 51)
+    - Policy输入：2维上下文向量 (2,)
+    - step列：仅用于序列排序和位置编码，不作为普通特征
+    """
+    
+    # 51维物理特征列名 (3区域 × 4字段 × 4统计量 = 48维 + 3全局统计)
     PHYS_COLS = [
         "A_HighStress__VonMises__mean", "A_HighStress__VonMises__max", 
         "A_HighStress__VonMises__std", "A_HighStress__VonMises__q95",
@@ -223,6 +236,68 @@ class ForgeDataLoader:
         
         return np.array(rewards)
     
+    def prepare_sequence_data(self, seq_len: int = 51) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """准备序列数据用于 Transformer/TFT
+        
+        将数据按轨迹组织成固定长度的序列
+        对于不足 seq_len 的轨迹进行 padding
+        
+        Args:
+            seq_len: 序列长度 (默认 51 步)
+            
+        Returns:
+            contexts: (N_trajectories, context_dim)
+            states: (N_trajectories, seq_len, feature_dim)
+            actions: (N_trajectories,) 离散动作索引 (每条轨迹一个固定动作)
+            rewards: (N_trajectories,) 每条轨迹的奖励
+        """
+        if self.df is None:
+            self.load_data()
+        
+        trajectories = []
+        contexts_list = []
+        states_list = []
+        actions_list = []
+        rewards_list = []
+        
+        # 按轨迹分组 (underfill, mu, r_l)
+        for (uf, mu, r_l), group in self.df.groupby(['underfill', 'mu', 'r_l']):
+            group = group.sort_values(self.step_col)
+            
+            # 提取上下文
+            context = np.array([uf, mu])
+            
+            # 提取状态特征序列
+            states = group[self.feature_cols].values
+            
+            # Padding 或截断到固定长度
+            if len(states) < seq_len:
+                # padding 用 0
+                pad_width = seq_len - len(states)
+                states = np.pad(states, ((0, pad_width), (0, 0)), mode='constant')
+            elif len(states) > seq_len:
+                states = states[:seq_len]
+            
+            # 动作索引
+            action_idx = np.searchsorted(self.actions, r_l)
+            
+            # 计算轨迹奖励
+            traj_df = group.copy()
+            reward = self._compute_rewards(traj_df)[0]  # 取第一个 (所有步骤相同)
+            
+            trajectories.append((uf, mu, r_l))
+            contexts_list.append(context)
+            states_list.append(states)
+            actions_list.append(action_idx)
+            rewards_list.append(reward)
+        
+        return (
+            np.array(contexts_list),
+            np.array(states_list),
+            np.array(actions_list),
+            np.array(rewards_list)
+        )
+    
     def train_val_split(self, val_ratio: float = 0.2) -> Tuple[Tuple, Tuple]:
         """按轨迹划分训练集和验证集
         
@@ -234,32 +309,36 @@ class ForgeDataLoader:
         """
         contexts, states, actions, rewards = self.prepare_bandit_dataset()
         
-        # 获取所有唯一轨迹
-        unique_trajectories = list(zip(
+        # 获取所有唯一轨迹 (underfill, mu 组合)
+        unique_trajectories = list(set(zip(
             self.df['underfill'].values,
             self.df['mu'].values
-        ))
+        )))
         
         # 随机打乱并划分
         np.random.seed(self.config['experiment']['seed'])
         n_trajectories = len(unique_trajectories)
-        n_val = int(n_trajectories * val_ratio)
+        n_val = max(1, int(n_trajectories * val_ratio))  # 至少1条验证轨迹
         
-        val_indices = set(np.random.choice(n_trajectories, n_val, replace=False))
+        val_indices = set(np.random.choice(n_trajectories, min(n_val, n_trajectories), replace=False))
+        val_trajectories = {unique_trajectories[i] for i in val_indices}
         
         train_mask = []
         val_mask = []
         
-        for i, (uf, mu) in enumerate(zip(self.df['underfill'], self.df['mu'])):
-            if (uf, mu) in [unique_trajectories[j] for j in val_indices]:
+        for uf, mu in zip(self.df['underfill'], self.df['mu']):
+            if (uf, mu) in val_trajectories:
                 val_mask.append(True)
                 train_mask.append(False)
             else:
-                train_mask.append(False)
-                val_mask.append(True)
+                train_mask.append(True)
+                val_mask.append(False)
         
-        train_mask = np.array(train_mask)
-        val_mask = np.array(val_mask)
+        train_mask = np.array(train_mask, dtype=bool)
+        val_mask = np.array(val_mask, dtype=bool)
+        
+        # 检查划分结果
+        print(f"轨迹划分：总共{n_trajectories}条，训练集{train_mask.sum()}样本，验证集{val_mask.sum()}样本")
         
         train_data = (
             contexts[train_mask],

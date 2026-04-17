@@ -155,26 +155,34 @@ class ContextualBanditTrainer:
         )
         
     def prepare_data(self) -> Tuple:
-        """准备训练和验证数据"""
-        train_data, val_data = self.data_loader.train_val_split(
-            val_ratio=self.config['data']['val_split']
+        """准备训练和验证数据 (序列模式)"""
+        # 使用序列数据格式
+        contexts, states, actions, rewards = self.data_loader.prepare_sequence_data(
+            seq_len=self.config['hyperparameters'].get('seq_len', 51)
         )
         
-        # 转换为 Tensor
-        def to_tensor(data):
-            contexts, states, actions, rewards = data
-            # 为状态添加序列维度 (batch, seq=1, features)
-            if len(states.shape) == 2:
-                states = states.unsqueeze(1)
-            return (
-                torch.FloatTensor(contexts).to(self.device),
-                torch.FloatTensor(states).to(self.device),
-                torch.LongTensor(actions).to(self.device),
-                torch.FloatTensor(rewards).to(self.device)
-            )
+        # 转换为 Tensor (先划分再转换)
+        train_idx, val_idx = self._get_trajectory_split()
         
-        train_tensors = to_tensor(train_data)
-        val_tensors = to_tensor(val_data)
+        # 确保索引是 numpy 数组
+        train_idx = np.array(train_idx, dtype=bool)
+        val_idx = np.array(val_idx, dtype=bool)
+        
+        print(f"数据划分：训练集{train_idx.sum()}条轨迹，验证集{val_idx.sum()}条轨迹")
+        
+        train_tensors = (
+            torch.FloatTensor(contexts[train_idx]).to(self.device),
+            torch.FloatTensor(states[train_idx]).to(self.device),
+            torch.LongTensor(actions[train_idx]).to(self.device),
+            torch.FloatTensor(rewards[train_idx]).to(self.device)
+        )
+        
+        val_tensors = (
+            torch.FloatTensor(contexts[val_idx]).to(self.device),
+            torch.FloatTensor(states[val_idx]).to(self.device),
+            torch.LongTensor(actions[val_idx]).to(self.device),
+            torch.FloatTensor(rewards[val_idx]).to(self.device)
+        )
         
         # 创建 DataLoader
         train_dataset = TensorDataset(*train_tensors)
@@ -184,6 +192,36 @@ class ContextualBanditTrainer:
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
         
         return train_loader, val_loader
+    
+    def _get_trajectory_split(self) -> Tuple[np.ndarray, np.ndarray]:
+        """按轨迹划分训练/验证索引 (基于完整轨迹数据)"""
+        # 获取所有唯一轨迹 (underfill, mu, r_l)
+        unique_trajectories = list(set(zip(
+            self.data_loader.df['underfill'].values,
+            self.data_loader.df['mu'].values,
+            self.data_loader.df['r_l'].values
+        )))
+        
+        np.random.seed(self.config['experiment']['seed'])
+        n_trajectories = len(unique_trajectories)
+        n_val = max(1, int(n_trajectories * self.config['data']['val_split']))
+        
+        val_indices = set(np.random.choice(n_trajectories, min(n_val, n_trajectories), replace=False))
+        val_trajectories = {unique_trajectories[i] for i in val_indices}
+        
+        # 为每条轨迹生成 mask (contexts/states/actions/rewards 是按轨迹组织的)
+        train_mask = []
+        val_mask = []
+        
+        for uf, mu, r_l in unique_trajectories:
+            if (uf, mu, r_l) in val_trajectories:
+                val_mask.append(True)
+                train_mask.append(False)
+            else:
+                train_mask.append(True)
+                val_mask.append(False)
+        
+        return np.array(train_mask, dtype=bool), np.array(val_mask, dtype=bool)
     
     def train_epoch(self, train_loader: DataLoader) -> float:
         """训练一个 epoch
