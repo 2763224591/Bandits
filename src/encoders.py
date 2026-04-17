@@ -292,8 +292,8 @@ if __name__ == "__main__":
     # 测试 Encoder
     batch_size = 32
     seq_len = 50
-    input_dim = 56
-    context_dim = 2
+    input_dim = 51  # 51 维物理特征 (48 区域统计 + 3 全局统计)
+    context_dim = 2  # underfill, mu
     
     # 模拟输入
     x = torch.randn(batch_size, seq_len, input_dim)
