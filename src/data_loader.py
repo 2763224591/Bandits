@@ -191,9 +191,10 @@ class ForgeDataLoader:
     def _compute_rewards(self, df: pd.DataFrame) -> np.ndarray:
         """计算奖励函数
         
-        奖励设计原则:
-        1. 高质量优先 (损伤/应力不超标)
-        2. 速度尽可能快 (连杆比大)
+        使用新的 Pareto 效用函数计算奖励：
+        R = Quality × Speed_Utility
+        
+        这种形式体现了"安全优先，兼顾效率"的非线性权衡。
         
         Args:
             df: 包含特征和参数的数据框
@@ -201,10 +202,8 @@ class ForgeDataLoader:
         Returns:
             奖励数组
         """
-        w_quality = self.config['reward']['w_quality']
-        w_speed = self.config['reward']['w_speed']
-        damage_th = self.config['reward']['damage_threshold']
-        stress_th = self.config['reward']['stress_threshold']
+        # 导入新的奖励函数
+        from reward_utils import calculate_quality_score, compute_reward_with_utility
         
         rewards = []
         
@@ -213,22 +212,11 @@ class ForgeDataLoader:
             # 该轨迹的最终状态 (最后一步)
             final_state = group.iloc[-1]
             
-            # 质量指标 (从最终状态或整个轨迹统计)
-            max_damage = group['A_HighStress__DAMAGE__max'].max()
-            max_stress = group['A_HighStress__VonMises__max'].max()
+            # 计算质量分数
+            quality = calculate_quality_score(final_state)
             
-            # 质量惩罚
-            quality_penalty = 0.0
-            if max_damage > damage_th:
-                quality_penalty += w_quality * (max_damage - damage_th) ** 2
-            if max_stress > stress_th:
-                quality_penalty += w_quality * ((max_stress - stress_th) / stress_th) ** 2
-            
-            # 速度奖励 (连杆比越大越快，归一化到 [0,1])
-            speed_reward = w_speed * (r_l - self.actions[0]) / (self.actions[-1] - self.actions[0])
-            
-            # 总奖励 (负惩罚 + 正奖励)
-            total_reward = speed_reward - quality_penalty
+            # 计算 Pareto 奖励 (质量 × 速度效用)
+            total_reward = compute_reward_with_utility(r_l, quality)
             
             # 该轨迹所有步骤共享相同奖励 (因为连杆比全程不变)
             for _ in range(len(group)):
