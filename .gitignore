@@ -1,30 +1,25 @@
 ```
-# Model and data artifacts
+# Compiled and build artifacts
 *.pth
-*.csv
+*.pyc
+__pycache__/
 
 # Dependencies
-.venv/
 venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
+.venv/
 .env
 .env.local
-*.env.*
+
+# Results and data files
+results/*.json
+results/*.png
 
 # Editors
 .vscode/
 .idea/
 
-# OS
-.DS_Store
-Thumbs.db
+# Logs and temp files
+*.log
+*.tmp
+*.swp
 ```

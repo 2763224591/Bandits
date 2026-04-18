@@ -1,5 +1,6 @@
 """
 主训练模块：整合所有组件，支持配置驱动的实验
+集成 Pareto 反事实评估系统
 """
 
 import os
@@ -20,6 +21,15 @@ from data_loader import ForgeDataLoader
 from encoders import create_encoder
 from uncertainty import QNetworkWithUncertainty, EnsembleModel
 from policy import create_policy
+from reward_utils import (
+    build_pareto_lookup_table,
+    build_conservative_lookup_table,
+    get_counterfactual_reward,
+    get_counterfactual_reward_conservative,
+    calculate_quality_score,
+    compute_reward_with_utility,
+    ACTION_VALUES
+)
 
 
 class ContextualBanditTrainer:
@@ -66,12 +76,18 @@ class ContextualBanditTrainer:
         # 构建策略
         self._build_policy()
         
+        # Pareto 查找表 (用于反事实评估)
+        self.pareto_lookup_table: Optional[Dict] = None
+        # BC 统计量表 (用于保守性惩罚)
+        self.bc_lookup_table: Optional[pd.DataFrame] = None
+        
         # 结果记录
         self.results = {
             'train_loss': [],
             'val_loss': [],
             'train_reward': [],
-            'val_reward': []
+            'val_reward': [],
+            'val_counterfactual_reward': []  # 新增：反事实奖励
         }
         
     def _set_seed(self, seed: int):
@@ -191,7 +207,55 @@ class ContextualBanditTrainer:
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
         
+        # 构建 Pareto 查找表 (用于反事实评估)
+        self._build_pareto_lookup_table()
+        
         return train_loader, val_loader
+    
+    def _build_pareto_lookup_table(self):
+        """构建 Pareto 奖励查找表和 BC 统计量表"""
+        if self.data_loader.df is None:
+            self.data_loader.load_data()
+        
+        # 仅使用训练集数据构建查找表 (避免数据泄露)
+        # 注意：数据已经通过_prepare_data 中的轨迹划分分离
+        # 这里我们使用一个简单的方法：重新应用相同的划分逻辑
+        train_idx, val_idx = self._get_trajectory_split()
+        
+        # 获取训练集索引对应的行
+        # 由于 df 是原始数据，而 train_idx 是轨迹级别的 mask
+        # 我们需要将轨迹 mask 转换为行级别的 mask
+        unique_trajectories = list(set(zip(
+            self.data_loader.df['underfill'].values,
+            self.data_loader.df['mu'].values,
+            self.data_loader.df['r_l'].values
+        )))
+        
+        # 为每一行找到对应的轨迹索引
+        trajectory_map = {traj: i for i, traj in enumerate(unique_trajectories)}
+        row_to_traj_idx = [
+            trajectory_map[(uf, mu, rl)] 
+            for uf, mu, rl in zip(
+                self.data_loader.df['underfill'].values,
+                self.data_loader.df['mu'].values,
+                self.data_loader.df['r_l'].values
+            )
+        ]
+        
+        # 创建行级别的训练集 mask
+        train_mask = np.array([train_idx[idx] for idx in row_to_traj_idx], dtype=bool)
+        train_df = self.data_loader.df[train_mask].copy()
+        
+        self.pareto_lookup_table = build_pareto_lookup_table(train_df)
+        print(f"Pareto 查找表已构建：{len(self.pareto_lookup_table)}个上下文状态")
+        
+        # 构建 BC 统计量表 (用于保守性惩罚)
+        self.bc_lookup_table = build_conservative_lookup_table(train_df)
+        print(f"BC 统计量表已构建：{len(self.bc_lookup_table)}个上下文状态")
+        
+        # 分析 Pareto 前沿
+        from reward_utils import analyze_pareto_frontier
+        analyze_pareto_frontier(train_df)
     
     def _get_trajectory_split(self) -> Tuple[np.ndarray, np.ndarray]:
         """按轨迹划分训练/验证索引 (基于完整轨迹数据)"""
@@ -262,15 +326,16 @@ class ContextualBanditTrainer:
         return total_loss / n_batches
     
     @torch.no_grad()
-    def evaluate(self, val_loader: DataLoader) -> Tuple[float, float]:
+    def evaluate(self, val_loader: DataLoader) -> Tuple[float, float, float]:
         """评估模型
         
         Returns:
-            平均损失，平均奖励
+            平均损失，平均奖励 (历史), 平均反事实奖励
         """
         self.q_network.eval()
         total_loss = 0.0
-        total_reward = 0.0
+        total_reward_historical = 0.0
+        total_reward_counterfactual = 0.0
         n_batches = 0
         n_samples = 0
         
@@ -291,19 +356,45 @@ class ContextualBanditTrainer:
             q_values = mean_q.gather(1, actions.unsqueeze(-1)).squeeze(-1)
             loss = self.criterion(q_values, rewards)
             
-            # 模拟策略选择并计算奖励
-            selected_rewards = []
+            # 策略选择并计算两种奖励
+            selected_rewards_historical = []
+            selected_rewards_counterfactual = []
+            
             for i in range(batch_size):
                 action_idx, _ = self.policy.select_action(mean_q[i], std_q[i])
-                # 使用真实奖励 (离线评估)
-                selected_rewards.append(rewards[i].item())
+                action_value = self.actions[action_idx]
+                
+                # 获取上下文 (underfill, mu)
+                ctx = contexts[i].cpu().numpy()
+                underfill, mu = ctx[0], ctx[1]
+                
+                # 1. 历史奖励 (离线评估陷阱：只是真实动作的奖励)
+                selected_rewards_historical.append(rewards[i].item())
+                
+                # 2. 保守性反事实奖励 (方案 A+B: 查表 + BC 惩罚)
+                if self.pareto_lookup_table is not None and self.bc_lookup_table is not None:
+                    cf_reward = get_counterfactual_reward_conservative(
+                        self.pareto_lookup_table,
+                        self.bc_lookup_table,
+                        underfill, mu, action_value,
+                        lambda_coeff=self.config['hyperparameters'].get('conservative_lambda', 2.0)
+                    )
+                else:
+                    cf_reward = rewards[i].item()
+                
+                selected_rewards_counterfactual.append(cf_reward)
             
             total_loss += loss.item() * batch_size
-            total_reward += sum(selected_rewards)
+            total_reward_historical += sum(selected_rewards_historical)
+            total_reward_counterfactual += sum(selected_rewards_counterfactual)
             n_batches += 1
             n_samples += batch_size
         
-        return total_loss / n_samples, total_reward / n_samples
+        return (
+            total_loss / n_samples,
+            total_reward_historical / n_samples,
+            total_reward_counterfactual / n_samples
+        )
     
     def train(self) -> Dict[str, Any]:
         """完整训练流程
@@ -330,24 +421,26 @@ class ContextualBanditTrainer:
             train_loss = self.train_epoch(train_loader)
             
             # 验证
-            val_loss, val_reward = self.evaluate(val_loader)
+            val_loss, val_reward_historical, val_reward_counterfactual = self.evaluate(val_loader)
             
             # 记录结果
             self.results['train_loss'].append(train_loss)
             self.results['val_loss'].append(val_loss)
             self.results['train_reward'].append(train_loss)  # 近似
-            self.results['val_reward'].append(val_reward)
+            self.results['val_reward'].append(val_reward_historical)
+            self.results['val_counterfactual_reward'].append(val_reward_counterfactual)
             
             # 打印进度
             if (epoch + 1) % 5 == 0 or epoch == 0:
                 print(f"Epoch {epoch+1}/{self.epochs} | "
                       f"Train Loss: {train_loss:.4f} | "
                       f"Val Loss: {val_loss:.4f} | "
-                      f"Val Reward: {val_reward:.4f}")
+                      f"Val Reward (Hist): {val_reward_historical:.4f} | "
+                      f"Val Reward (CF): {val_reward_counterfactual:.4f}")
             
-            # 早停检查
-            if val_reward > best_val_reward:
-                best_val_reward = val_reward
+            # 早停检查 (使用反事实奖励)
+            if val_reward_counterfactual > best_val_reward:
+                best_val_reward = val_reward_counterfactual
                 patience_counter = 0
                 # 保存最佳模型
                 self.save_model("best_model.pth")
@@ -357,7 +450,7 @@ class ContextualBanditTrainer:
                     print(f"早停于 epoch {epoch+1}")
                     break
         
-        print(f"\n训练完成！最佳验证奖励：{best_val_reward:.4f}")
+        print(f"\n训练完成！最佳验证反事实奖励：{best_val_reward:.4f}")
         
         return self.results
     
@@ -379,7 +472,7 @@ class ContextualBanditTrainer:
     
     def load_model(self, path: str):
         """加载模型"""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.encoder.load_state_dict(checkpoint['encoder_state_dict'])
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
