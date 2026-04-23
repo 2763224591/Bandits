@@ -1,0 +1,45 @@
+# 配置 5: Transformer + Deterministic (None) + Epsilon-Greedy (基线对比)
+experiment:
+  name: "Transformer_None_EpsilonGreedy_Baseline"
+  seed: 42
+  device: "cuda"
+
+data:
+  path: "data/features/features_all.csv"
+  context_cols: ["underfill", "mu"]
+  action_col: "r_l"
+  feature_cols: null
+  val_split: 0.2
+
+model:
+  encoder_type: "transformer"
+  uncertainty_type: "none"       # 确定性模型 (无不确定性估计)
+  policy_type: "epsilon_greedy"  # Epsilon-Greedy 策略 (基线)
+
+hyperparameters:
+  d_model: 64
+  n_heads: 4
+  n_layers: 3
+  dropout: 0.1
+  mc_dropout_samples: 10
+  ensemble_size: 5
+  exploration_bonus: 0.1
+  prior_alpha: 1.0
+  prior_beta: 1.0
+  epsilon: 0.1              # Epsilon 初始值
+  epsilon_decay: 0.995      # Epsilon 衰减率
+  epsilon_min: 0.01         # Epsilon 最小值
+  batch_size: 64
+  lr: 0.001
+  epochs: 50
+  weight_decay: 0.0001
+  conservative_lambda: 2.0
+
+reward:
+  w_quality: 10.0
+  w_speed: 1.0
+  damage_threshold: 0.8
+  stress_threshold: 800.0
+
+actions:
+  values: [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]

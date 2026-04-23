@@ -161,14 +161,30 @@ class ContextualBanditTrainer:
         model_config = self.config['model']
         hp = self.config['hyperparameters']
         
-        self.policy = create_policy(
-            policy_type=model_config['policy_type'],
-            n_actions=self.n_actions,
-            actions=self.actions,
-            exploration_bonus=hp.get('exploration_bonus', 0.1),
-            prior_alpha=hp.get('prior_alpha', 1.0),
-            device=str(self.device)
-        )
+        # 根据 policy_type 传递不同的参数
+        policy_kwargs = {
+            'policy_type': model_config['policy_type'],
+            'n_actions': self.n_actions,
+            'actions': self.actions,
+            'device': str(self.device)
+        }
+        
+        # 添加 UCB 参数
+        if hp.get('exploration_bonus') is not None:
+            policy_kwargs['exploration_bonus'] = hp.get('exploration_bonus', 0.1)
+        
+        # 添加 Thompson Sampling 参数
+        if hp.get('prior_alpha') is not None:
+            policy_kwargs['prior_alpha'] = hp.get('prior_alpha', 1.0)
+            policy_kwargs['prior_beta'] = hp.get('prior_beta', 1.0)
+        
+        # 添加 Epsilon-Greedy 参数
+        if hp.get('epsilon') is not None:
+            policy_kwargs['epsilon'] = hp.get('epsilon', 0.1)
+            policy_kwargs['epsilon_decay'] = hp.get('epsilon_decay', 0.995)
+            policy_kwargs['epsilon_min'] = hp.get('epsilon_min', 0.01)
+        
+        self.policy = create_policy(**policy_kwargs)
         
     def prepare_data(self) -> Tuple:
         """准备训练和验证数据 (序列模式)"""
