@@ -1,25 +1,4 @@
 ```
-# Compiled and build artifacts
-*.pth
-*.pyc
-__pycache__/
-
-# Dependencies
-venv/
-.venv/
-.env
-.env.local
-
-# Results and data files
-results/*.json
-results/*.png
-
-# Editors
-.vscode/
-.idea/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
+# Examples and documentation
+config/README_experiments.md
 ```

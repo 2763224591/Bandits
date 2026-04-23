@@ -17,10 +17,10 @@ model:
   # --- Encoder 选择: "transformer" 或 "tft" ---
   encoder_type: "transformer" 
   
-  # --- Uncertainty 选择: "mc_dropout", "ensemble", 或 "none" ---
+  # --- Uncertainty 选择: "mc_dropout", "ensemble", 或 "none" (确定性基线) ---
   uncertainty_type: "mc_dropout"
   
-  # --- Policy 选择: "neural_ucb" 或 "thompson_sampling" ---
+  # --- Policy 选择: "neural_ucb", "thompson_sampling", 或 "epsilon_greedy" (基线) ---
   policy_type: "neural_ucb"
 
 hyperparameters:
@@ -36,7 +36,11 @@ hyperparameters:
   
   # Policy 参数
   exploration_bonus: 0.1      # UCB 探索系数
-  prior_alpha: 1.0            # Thompson 先验参数
+  prior_alpha: 1.0            # Thompson 先验参数 alpha
+  prior_beta: 1.0             # Thompson 先验参数 beta
+  epsilon: 0.1                # Epsilon-Greedy 探索率 (基线)
+  epsilon_decay: 0.995        # Epsilon 衰减率
+  epsilon_min: 0.01           # Epsilon 最小值
   
   # 训练参数
   batch_size: 64
